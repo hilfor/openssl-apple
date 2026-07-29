@@ -7,8 +7,10 @@ OutputLevel.default = .error
 // told otherwise, which cost nothing under 1.1.1 because the APIs it controls
 // were current there. Under 3.x it drops them from the library entirely, and
 // libssh2 imports two: ENGINE_load_builtin_engines and
-// ENGINE_register_all_complete. These resolve at load time, so omitting them is
-// not a link error -- the consuming app builds, ships, and dies in dyld.
+// ENGINE_register_all_complete. Those imports are lazy-bound, so omitting them
+// is not a link error and does not fail launch either -- the consuming app
+// builds, ships, passes its tests, and aborts under dyld the first time the
+// missing function is actually called.
 //
 // This flag does not make a 1.1.1-era libssh2 loadable on its own. That binary
 // also imports EVP_PKEY_id, which 3.0 renamed to EVP_PKEY_get_id and left
