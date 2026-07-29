@@ -1,0 +1,16 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "FMake",
+        "repositoryURL": "https://github.com/hilfor/FMake",
+        "state": {
+          "branch": null,
+          "revision": "e7ecc35965985fc0c33161269c8550f3405c7909",
+          "version": "1.0.0"
+        }
+      }
+    ]
+  },
+  "version": 1
+}

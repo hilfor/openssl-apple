@@ -25,7 +25,15 @@ set -u
 # SCRIPT DEFAULTS
 
 # Default version in case no version is specified
-DEFAULTVERSION="1.1.1w"
+DEFAULTVERSION="3.5.7"
+
+# SHA-256 of openssl-3.5.7.tar.gz, recorded here at pin time. Pinned rather than
+# read from the .sha256 the download host serves beside the tarball: a checksum
+# fetched over the same channel from the same origin proves the bytes survived
+# transit, not that they are the bytes we chose. Applies to DEFAULTVERSION only;
+# an explicit --version= has nothing recorded and falls back to the published
+# checksum, which is still better than no check.
+DEFAULTVERSION_SHA256="a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
 
 # no-comp: against CRIME attack
 # no-shared: openssl-cli needs static link
@@ -42,13 +50,13 @@ NODE_CONFIG_OPTIONS="no-comp no-shared enable-ssl-trace"
 #TARGETS`
 
 DEFAULTTARGETS=`cat <<TARGETS
-ios-sim-cross-x86_64 ios-sim-cross-arm64 ios64-cross-arm64 ios64-cross-arm64e
+ios-sim-cross-x86_64 ios-sim-cross-arm64 ios64-cross-arm64
 macos64-x86_64 macos64-arm64
 mac-catalyst-x86_64 mac-catalyst-arm64
 TARGETS`
 
 # Minimum iOS/tvOS SDK version to build for
-IOS_MIN_SDK_VERSION="14.0"
+IOS_MIN_SDK_VERSION="26.0"
 MACOS_MIN_SDK_VERSION="11.0"
 CATALYST_MIN_SDK_VERSION="11.0"
 WATCHOS_MIN_SDK_VERSION="6.0"
@@ -461,37 +469,68 @@ echo
 # Download OpenSSL when not present
 OPENSSL_ARCHIVE_BASE_NAME="openssl-${VERSION}"
 OPENSSL_ARCHIVE_FILE_NAME="${OPENSSL_ARCHIVE_BASE_NAME}.tar.gz"
+
+# OpenSSL 3.x tags its GitHub releases "openssl-<version>", so the tag follows
+# from VERSION and a wrong VERSION fails at the download rather than silently
+# building whatever some hardcoded tag happened to hold. (1.x used
+# "OpenSSL_1_1_1w"; that series is end-of-life and is not built here.)
+OPENSSL_ARCHIVE_URL="https://github.com/openssl/openssl/releases/download/openssl-${VERSION}/${OPENSSL_ARCHIVE_FILE_NAME}"
+
+verify_archive_checksum()
+{
+  local archive="$1"
+  local expected actual source
+  if [ "${VERSION}" = "${DEFAULTVERSION}" ]; then
+    expected="${DEFAULTVERSION_SHA256}"
+    source="the pinned DEFAULTVERSION_SHA256"
+  else
+    expected=$(curl ${CURL_OPTIONS} -sfL "${OPENSSL_ARCHIVE_URL}.sha256" | awk '{print $1}')
+    source="the checksum published beside the tarball"
+    if [ -z "${expected}" ]; then
+      echo "Could not fetch a published SHA-256 for ${archive}."
+      exit 1
+    fi
+  fi
+  actual=$(shasum -a 256 "${archive}" | awk '{print $1}')
+  if [ "${expected}" != "${actual}" ]; then
+    echo "Checksum mismatch for ${archive}"
+    echo "  expected: ${expected}"
+    echo "  actual:   ${actual}"
+    exit 1
+  fi
+  echo "Verified ${archive} against ${source}."
+}
+
 if [ ! -e ${OPENSSL_ARCHIVE_FILE_NAME} ]; then
   echo "Downloading ${OPENSSL_ARCHIVE_FILE_NAME}..."
-  OPENSSL_ARCHIVE_URL="https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1w/${OPENSSL_ARCHIVE_FILE_NAME}"
-#  https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1w/openssl-1.1.1w.tar.gz
 
   # Check whether file exists here (this is the location of the latest version for each branch)
   # -s be silent, -f return non-zero exit status on failure, -I get header (do not download)
-  curl ${CURL_OPTIONS} -sfI "${OPENSSL_ARCHIVE_URL}" > /dev/null
+  if ! curl ${CURL_OPTIONS} -sfI "${OPENSSL_ARCHIVE_URL}" > /dev/null; then
+    # If unsuccessful, try the archive. The old-source layout keys on the
+    # release series, not the full version: .../old/3.5/openssl-3.5.7.tar.gz
+    SERIES=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+')
+    OPENSSL_ARCHIVE_URL="https://www.openssl.org/source/old/${SERIES}/${OPENSSL_ARCHIVE_FILE_NAME}"
 
-  # If unsuccessful, try the archive
-  if [ $? -ne 0 ]; then
-    BRANCH=$(echo "${VERSION}" | grep -Eo '^[0-9]\.[0-9]\.[0-9]')
-    OPENSSL_ARCHIVE_URL="https://www.openssl.org/source/old/${BRANCH}/${OPENSSL_ARCHIVE_FILE_NAME}"
-
-    curl ${CURL_OPTIONS} -sfI "${OPENSSL_ARCHIVE_URL}" > /dev/null
-  fi
-
-  # Both attempts failed, so report the error
-  if [ $? -ne 0 ]; then
-    echo "An error occurred trying to find OpenSSL ${VERSION} on ${OPENSSL_ARCHIVE_URL}"
-    echo "Please verify that the version you are trying to build exists, check cURL's error message and/or your network connection."
-    exit 1
+    if ! curl ${CURL_OPTIONS} -sfI "${OPENSSL_ARCHIVE_URL}" > /dev/null; then
+      echo "An error occurred trying to find OpenSSL ${VERSION} on ${OPENSSL_ARCHIVE_URL}"
+      echo "Please verify that the version you are trying to build exists, check cURL's error message and/or your network connection."
+      exit 1
+    fi
   fi
 
   # Archive was found, so proceed with download.
-  # -O Use server-specified filename for download
-  curl ${CURL_OPTIONS} -O "${OPENSSL_ARCHIVE_URL}"
+  # -L follow the redirect GitHub release assets answer with.
+  curl ${CURL_OPTIONS} -fL -o "${OPENSSL_ARCHIVE_FILE_NAME}" "${OPENSSL_ARCHIVE_URL}"
 
 else
   echo "Using ${OPENSSL_ARCHIVE_FILE_NAME}"
 fi
+
+# Outside the branch on purpose: a tarball left in the build directory by an
+# earlier run is exactly the one nobody has looked at. Checking only what we
+# just downloaded would leave the reused path unverified.
+verify_archive_checksum "${OPENSSL_ARCHIVE_FILE_NAME}"
 
 # Set reference to custom configuration (OpenSSL 1.1.1)
 # See: https://github.com/openssl/openssl/commit/afce395cba521e395e6eecdaf9589105f61e4411

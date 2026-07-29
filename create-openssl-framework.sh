@@ -110,9 +110,21 @@ function get_min_sdk() {
 #   'g' = 103 -> 6 + 1 = 07 (zero-padded)
 #   1.1.107
 #
+#
+# From 3.0 on there is no trailing letter — the version is already
+# MAJOR.MINOR.PATCH, which CFBundleShortVersionString accepts as-is. Running the
+# offset encoding over it subtracts 97 from a digit and yields a negative
+# component (3.5.7 -> "3.5.-41"), which App Store Connect rejects.
+#
 function get_openssl_version() {
     local opensslv=$1
     local std_version=$(awk '/define OPENSSL_VERSION_TEXT/ && !/-fips/ {print $5}' "$opensslv")
+
+    if [[ ! "$std_version" =~ [a-z]$ ]]; then
+        echo "$std_version"
+        return
+    fi
+
     local generic_version=${std_version%?}
     local subpatch=${std_version: -1}
     local subpatch_number=$(($(printf '%d' \'$subpatch) - 97 + 1))
@@ -140,21 +152,34 @@ if [ $FWTYPE == "dynamic" ]; then
         echo "Assembling .dylib for $PLATFORM $SDKVERSION ($ARCH)"
 
         MIN_SDK_VERSION=$(get_min_sdk "${TARGETDIR}/lib/libcrypto.a")
+        # The linker dropped the three -*_simulator_version_min flags outright
+        # ("ld: unknown options: -ios_simulator_version_min") and renamed
+        # -macosx_version_min to -macos_version_min. Simulator slices therefore
+        # go through -platform_version <platform> <min> <sdk>. The device flags
+        # (-ios_version_min, -tvos_version_min, -watchos_version_min) are still
+        # accepted and are left alone.
+        #
+        # The Catalyst branch used -platform_version already, but with the
+        # arguments transposed: a hardcoded 14.0 in the <min> slot and
+        # MIN_SDK_VERSION -- which get_min_sdk reads as a *minimum* off
+        # libcrypto.a -- in the <sdk> slot. It went unnoticed because
+        # mac-catalyst-base leaves its min flag commented out, so both values
+        # came back 14.0 and the transposition was invisible.
         if [[ $PLATFORM == AppleTVSimulator* ]]; then
-            MIN_SDK="-tvos_simulator_version_min $MIN_SDK_VERSION"
+            MIN_SDK="-platform_version tvos-simulator $MIN_SDK_VERSION $SDKVERSION"
         elif [[ $PLATFORM == AppleTV* ]]; then
             MIN_SDK="-tvos_version_min $MIN_SDK_VERSION"
         elif [[ $PLATFORM == MacOSX* ]]; then
-            MIN_SDK="-macosx_version_min $MIN_SDK_VERSION"
+            MIN_SDK="-macos_version_min $MIN_SDK_VERSION"
         elif [[ $PLATFORM == Catalyst* ]]; then
-            MIN_SDK="-platform_version mac-catalyst 14.0 $MIN_SDK_VERSION"
+            MIN_SDK="-platform_version mac-catalyst $MIN_SDK_VERSION $SDKVERSION"
             PLATFORM="MacOSX"
         elif [[ $PLATFORM == iPhoneSimulator* ]]; then
-            MIN_SDK="-ios_simulator_version_min $MIN_SDK_VERSION"
+            MIN_SDK="-platform_version ios-simulator $MIN_SDK_VERSION $SDKVERSION"
         elif [[ $PLATFORM == WatchOS* ]]; then
             MIN_SDK="-watchos_version_min $MIN_SDK_VERSION"
         elif [[ $PLATFORM == WatchSimulator* ]]; then
-            MIN_SDK="-watchos_simulator_version_min $MIN_SDK_VERSION"
+            MIN_SDK="-platform_version watchos-simulator $MIN_SDK_VERSION $SDKVERSION"
         else
             MIN_SDK="-ios_version_min $MIN_SDK_VERSION"
         fi
@@ -176,7 +201,6 @@ if [ $FWTYPE == "dynamic" ]; then
 
         ld obj/*.o \
             -dylib \
-            -bitcode_bundle \
             -lSystem \
             -arch $ARCH \
             $MIN_SDK \
