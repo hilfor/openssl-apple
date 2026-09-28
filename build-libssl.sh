@@ -56,7 +56,7 @@ mac-catalyst-x86_64 mac-catalyst-arm64
 TARGETS`
 
 # Minimum iOS/tvOS SDK version to build for
-IOS_MIN_SDK_VERSION="26.0"
+IOS_MIN_SDK_VERSION="17.0"
 MACOS_MIN_SDK_VERSION="11.0"
 CATALYST_MIN_SDK_VERSION="11.0"
 WATCHOS_MIN_SDK_VERSION="6.0"
